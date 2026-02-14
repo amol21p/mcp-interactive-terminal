@@ -42,7 +42,22 @@ export async function handleSendControl(
 
   sessionManager.touchSession(args.session_id);
 
-  session.terminal.write(sequence);
+  // In pipe mode, certain control keys map to signals
+  if (session.terminal.mode === "pipe") {
+    const signalMap: Record<string, NodeJS.Signals> = {
+      "ctrl+c": "SIGINT",
+      "ctrl+\\": "SIGQUIT",
+      "ctrl+z": "SIGTSTP",
+    };
+    const signal = signalMap[key];
+    if (signal) {
+      session.terminal.process.kill(signal);
+    } else {
+      session.terminal.write(sequence);
+    }
+  } else {
+    session.terminal.write(sequence);
+  }
 
   // Brief wait for response
   await new Promise((resolve) => setTimeout(resolve, CONTROL_WAIT_MS));

@@ -1,16 +1,18 @@
 /**
- * Core terminal wrapper: PTY + xterm-headless.
+ * Core terminal wrapper.
  *
- * Spawns an interactive process via node-pty, feeds output into
- * xterm-headless for clean rendering, and provides methods to
- * read the screen as plain text.
+ * Strategy:
+ *   1. Try node-pty + xterm-headless (best: true PTY, clean rendered output)
+ *   2. Fallback to child_process.spawn with pipes (works in sandboxed environments)
+ *
+ * The fallback loses PTY features (no terminal emulation, no resize) but
+ * provides working interactive sessions in Claude Code's sandbox.
  */
 
-import pty from "node-pty";
-import xterm from "@xterm/headless";
-const { Terminal } = xterm;
+import { spawn, type ChildProcess } from "node:child_process";
 import type { TerminalWrapper } from "./types.js";
 import { detectPromptPattern, endsWithPrompt } from "./utils/output-detector.js";
+import { stripAnsi } from "./utils/sanitizer.js";
 
 const OUTPUT_SETTLE_MS = 300;
 
@@ -23,172 +25,335 @@ export interface TerminalOptions {
   rows?: number;
 }
 
-export function createTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
+/**
+ * Create a terminal wrapper. Tries node-pty first, falls back to child_process.
+ */
+export async function createTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
+  try {
+    return await createPtyTerminal(options);
+  } catch (ptyErr) {
+    console.error(`[mcp-terminal] node-pty failed (${ptyErr}), falling back to pipe mode`);
+    return createPipeTerminal(options);
+  }
+}
+
+// ─── PTY mode (node-pty + xterm-headless) ───────────────────────────
+
+async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
+  // Dynamic imports — these are optional deps in pipe-fallback mode
+  const pty = await import("node-pty");
+  const xtermMod = await import("@xterm/headless");
+  const Terminal = xtermMod.Terminal ?? (xtermMod as any).default?.Terminal;
+
+  const cols = options.cols ?? 120;
+  const rows = options.rows ?? 40;
+  const xterm = new Terminal({ cols, rows, scrollback: 1000 });
+
+  const ptyProcess = pty.spawn(options.command, options.args ?? [], {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd: options.cwd ?? process.cwd(),
+    env: { ...process.env, ...options.env } as Record<string, string>,
+  });
+
+  let isAlive = true;
+  let promptPattern: RegExp | null = null;
+  let outputBuffer = "";
+  let lastOutputTime = Date.now();
+
+  ptyProcess.onData((data: string) => {
+    xterm.write(data);
+    outputBuffer += data;
+    lastOutputTime = Date.now();
+  });
+
+  ptyProcess.onExit(() => {
+    isAlive = false;
+  });
+
+  const wrapper: TerminalWrapper = {
+    process: ptyProcess as any,
+    pid: ptyProcess.pid,
+    get isAlive() { return isAlive; },
+    promptPattern,
+    mode: "pty",
+
+    write(data: string) {
+      if (!isAlive) throw new Error("Session is not alive");
+      outputBuffer = "";
+      ptyProcess.write(data);
+    },
+
+    readScreen(fullScreen = false): string {
+      const buffer = xterm.buffer.active;
+      const lines: string[] = [];
+      if (fullScreen) {
+        const start = -buffer.viewportY;
+        for (let i = start; i < buffer.length; i++) {
+          const line = buffer.getLine(i);
+          if (line) lines.push(line.translateToString(true));
+        }
+      } else {
+        for (let i = 0; i < rows; i++) {
+          const line = buffer.getLine(buffer.baseY + i);
+          if (line) lines.push(line.translateToString(true));
+        }
+      }
+      while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+      return lines.join("\n");
+    },
+
+    async waitForOutput(timeoutMs: number) {
+      return waitForSettled(() => isAlive, () => outputBuffer, () => lastOutputTime, () => wrapper.readScreen(), timeoutMs, wrapper);
+    },
+
+    resize(newCols: number, newRows: number) {
+      ptyProcess.resize(newCols, newRows);
+      xterm.resize(newCols, newRows);
+    },
+
+    kill(signal?: string) {
+      if (isAlive) { ptyProcess.kill(signal); isAlive = false; }
+    },
+
+    dispose() {
+      if (isAlive) { ptyProcess.kill(); isAlive = false; }
+      xterm.dispose();
+    },
+  };
+
+  // Wait for startup output to detect prompt
+  await new Promise((r) => setTimeout(r, 1000));
+  const startupScreen = wrapper.readScreen();
+  promptPattern = detectPromptPattern(startupScreen);
+  wrapper.promptPattern = promptPattern;
+  return wrapper;
+}
+
+// ─── Pipe mode (child_process fallback) ─────────────────────────────
+
+/**
+ * In pipe mode, some programs need extra flags to behave interactively.
+ * Returns modified args array with interactive flags prepended if needed.
+ */
+function pipeInteractiveArgs(command: string, args: string[]): string[] {
+  const base = command.split("/").pop() ?? command;
+
+  // Python: needs -i for interactive mode, -u for unbuffered
+  if (/^python[23]?$/.test(base)) {
+    const hasI = args.includes("-i") || args.includes("-u");
+    if (!hasI) return ["-u", "-i", ...args];
+    if (!args.includes("-u")) return ["-u", ...args];
+    return args;
+  }
+
+  // Node: needs --interactive (or -i) for REPL when stdin is piped
+  if (base === "node" || base === "nodejs") {
+    const hasI = args.includes("-i") || args.includes("--interactive");
+    if (!hasI) return ["--interactive", ...args];
+    return args;
+  }
+
+  // Bash/zsh/sh: add -i for interactive mode (prompts, job control)
+  if (/^(ba)?sh$|^zsh$/.test(base)) {
+    const hasI = args.includes("-i");
+    if (!hasI) return ["-i", ...args];
+    return args;
+  }
+
+  return args;
+}
+
+function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
   return new Promise((resolve, reject) => {
-    const cols = options.cols ?? 120;
-    const rows = options.rows ?? 40;
-
-    const xterm = new Terminal({ cols, rows, scrollback: 1000 });
-
-    let ptyProcess: pty.IPty;
+    const args = pipeInteractiveArgs(options.command, options.args ?? []);
+    let proc: ChildProcess;
     try {
-      ptyProcess = pty.spawn(options.command, options.args ?? [], {
-        name: "xterm-256color",
-        cols,
-        rows,
+      proc = spawn(options.command, args, {
         cwd: options.cwd ?? process.cwd(),
-        env: { ...process.env, ...options.env } as Record<string, string>,
+        env: {
+          ...process.env,
+          TERM: "dumb",
+          PYTHONUNBUFFERED: "1",
+          PYTHONDONTWRITEBYTECODE: "1",
+          NODE_NO_READLINE: "1",
+          ...options.env,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (err) {
-      xterm.dispose();
       reject(new Error(`Failed to spawn "${options.command}": ${err}`));
+      return;
+    }
+
+    if (!proc.pid) {
+      // Handle spawn errors that come async
+      proc.once("error", (err) => {
+        reject(new Error(`Failed to spawn "${options.command}": ${err.message}`));
+      });
+      // Give it a moment to either get a pid or error
+      setTimeout(() => {
+        if (!proc.pid) {
+          reject(new Error(`Failed to spawn "${options.command}": no pid assigned`));
+        }
+      }, 500);
       return;
     }
 
     let isAlive = true;
     let promptPattern: RegExp | null = null;
-    // Buffer to accumulate new output since last read
-    let outputBuffer = "";
+    let outputLines: string[] = [];
     let lastOutputTime = Date.now();
+    let outputGeneration = 0;
 
-    // Feed PTY output into xterm
-    ptyProcess.onData((data: string) => {
-      xterm.write(data);
-      outputBuffer += data;
+    const appendOutput = (data: Buffer) => {
+      const text = data.toString();
+      // Split into lines but preserve partial lines
+      const parts = text.split("\n");
+      if (parts.length === 1) {
+        // Partial line — append to last line
+        if (outputLines.length === 0) outputLines.push("");
+        outputLines[outputLines.length - 1] += parts[0];
+      } else {
+        // Complete lines
+        if (outputLines.length > 0) {
+          outputLines[outputLines.length - 1] += parts[0];
+        } else {
+          outputLines.push(parts[0]);
+        }
+        for (let i = 1; i < parts.length; i++) {
+          outputLines.push(parts[i]);
+        }
+      }
       lastOutputTime = Date.now();
-    });
+      outputGeneration++;
 
-    ptyProcess.onExit(() => {
-      isAlive = false;
-    });
+      // Cap scrollback at 2000 lines
+      if (outputLines.length > 2000) {
+        outputLines = outputLines.slice(-1000);
+      }
+    };
+
+    proc.stdout!.on("data", appendOutput);
+    proc.stderr!.on("data", appendOutput);
+
+    proc.on("exit", () => { isAlive = false; });
+    proc.on("error", () => { isAlive = false; });
 
     const wrapper: TerminalWrapper = {
-      pty: ptyProcess,
-      xterm,
-      get isAlive() {
-        return isAlive;
-      },
+      process: proc,
+      pid: proc.pid!,
+      get isAlive() { return isAlive; },
       promptPattern,
+      mode: "pipe",
 
       write(data: string) {
         if (!isAlive) throw new Error("Session is not alive");
-        // Clear the output buffer before writing so we only capture new output
-        outputBuffer = "";
-        ptyProcess.write(data);
+        proc.stdin!.write(data);
       },
 
       readScreen(fullScreen = false): string {
-        const buffer = xterm.buffer.active;
-        const lines: string[] = [];
-
         if (fullScreen) {
-          // Read entire scrollback + visible area
-          const start = -buffer.viewportY;
-          for (let i = start; i < buffer.length; i++) {
-            const line = buffer.getLine(i);
-            if (line) {
-              lines.push(line.translateToString(true));
-            }
-          }
-        } else {
-          // Read only the visible viewport area
-          for (let i = 0; i < rows; i++) {
-            const line = buffer.getLine(buffer.baseY + i);
-            if (line) {
-              lines.push(line.translateToString(true));
-            }
-          }
+          return stripAnsi(outputLines.join("\n"));
         }
-
-        // Trim trailing empty lines
-        while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
-          lines.pop();
-        }
-
-        return lines.join("\n");
+        // Return last ~40 lines (simulating a viewport)
+        const viewportSize = options.rows ?? 40;
+        const start = Math.max(0, outputLines.length - viewportSize);
+        return stripAnsi(outputLines.slice(start).join("\n"));
       },
 
-      async waitForOutput(timeoutMs: number): Promise<{ output: string; isComplete: boolean }> {
-        const startOutput = outputBuffer;
-        const startTime = Date.now();
-
-        return new Promise((res) => {
-          let settled = false;
-
-          const check = () => {
-            const elapsed = Date.now() - startTime;
-
-            // Layer 1: Process exit
-            if (!isAlive) {
-              res({ output: wrapper.readScreen(), isComplete: true });
-              return;
-            }
-
-            // Layer 4: Timeout
-            if (elapsed >= timeoutMs) {
-              res({ output: wrapper.readScreen(), isComplete: false });
-              return;
-            }
-
-            const timeSinceOutput = Date.now() - lastOutputTime;
-
-            // Layer 3: Output settling
-            if (timeSinceOutput >= OUTPUT_SETTLE_MS && outputBuffer !== startOutput) {
-              const screen = wrapper.readScreen();
-              // Layer 2: Prompt detection
-              if (wrapper.promptPattern && endsWithPrompt(screen, wrapper.promptPattern)) {
-                res({ output: screen, isComplete: true });
-                return;
-              }
-              // Output settled but no prompt — might still be running
-              // Give a bit more time unless we're close to timeout
-              if (!settled) {
-                settled = true;
-                // Wait one more settle period
-                setTimeout(check, OUTPUT_SETTLE_MS);
-                return;
-              }
-              // Second settle — consider it done
-              res({ output: screen, isComplete: true });
-              return;
-            }
-
-            // Keep checking
-            setTimeout(check, 50);
-          };
-
-          // Start checking after a brief initial delay
-          setTimeout(check, 50);
-        });
+      async waitForOutput(timeoutMs: number) {
+        const startGen = outputGeneration;
+        return waitForSettled(
+          () => isAlive,
+          () => String(outputGeneration),
+          () => lastOutputTime,
+          () => wrapper.readScreen(),
+          timeoutMs,
+          wrapper,
+        );
       },
 
-      resize(newCols: number, newRows: number) {
-        ptyProcess.resize(newCols, newRows);
-        xterm.resize(newCols, newRows);
+      resize(_cols: number, _rows: number) {
+        // No-op in pipe mode — no PTY to resize
       },
 
       kill(signal?: string) {
         if (isAlive) {
-          ptyProcess.kill(signal);
+          const sig = signal as NodeJS.Signals | undefined;
+          proc.kill(sig ?? "SIGTERM");
           isAlive = false;
         }
       },
 
       dispose() {
         if (isAlive) {
-          ptyProcess.kill();
+          proc.kill("SIGTERM");
           isAlive = false;
         }
-        xterm.dispose();
       },
     };
 
-    // Wait for initial startup output to detect prompt
+    // Wait for startup output to detect prompt
     setTimeout(() => {
       const startupScreen = wrapper.readScreen();
       promptPattern = detectPromptPattern(startupScreen);
       wrapper.promptPattern = promptPattern;
       resolve(wrapper);
     }, 1000);
+  });
+}
+
+// ─── Shared wait logic ──────────────────────────────────────────────
+
+function waitForSettled(
+  getAlive: () => boolean,
+  getOutputMarker: () => string,
+  getLastOutputTime: () => number,
+  getScreen: () => string,
+  timeoutMs: number,
+  wrapper: TerminalWrapper,
+): Promise<{ output: string; isComplete: boolean }> {
+  const startMarker = getOutputMarker();
+  const startTime = Date.now();
+
+  return new Promise((res) => {
+    let settled = false;
+
+    const check = () => {
+      const elapsed = Date.now() - startTime;
+
+      if (!getAlive()) {
+        res({ output: getScreen(), isComplete: true });
+        return;
+      }
+
+      if (elapsed >= timeoutMs) {
+        res({ output: getScreen(), isComplete: false });
+        return;
+      }
+
+      const timeSinceOutput = Date.now() - getLastOutputTime();
+
+      if (timeSinceOutput >= OUTPUT_SETTLE_MS && getOutputMarker() !== startMarker) {
+        const screen = getScreen();
+        if (wrapper.promptPattern && endsWithPrompt(screen, wrapper.promptPattern)) {
+          res({ output: screen, isComplete: true });
+          return;
+        }
+        if (!settled) {
+          settled = true;
+          setTimeout(check, OUTPUT_SETTLE_MS);
+          return;
+        }
+        res({ output: screen, isComplete: true });
+        return;
+      }
+
+      setTimeout(check, 50);
+    };
+
+    setTimeout(check, 50);
   });
 }

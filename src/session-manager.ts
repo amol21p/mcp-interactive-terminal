@@ -35,7 +35,7 @@ export class SessionManager {
       name: options.name ?? `${options.command}-${id}`,
       command: options.command,
       args: options.args ?? [],
-      pid: terminal.pty.pid,
+      pid: terminal.pid,
       createdAt: new Date(),
       lastActivity: new Date(),
       isAlive: true,

@@ -1,5 +1,4 @@
-import type { IPty } from "node-pty";
-import type { Terminal } from "@xterm/headless";
+import type { ChildProcess } from "node:child_process";
 
 // --- Configuration ---
 
@@ -68,10 +67,11 @@ export interface SessionInfo {
 // --- Terminal Wrapper ---
 
 export interface TerminalWrapper {
-  pty: IPty;
-  xterm: Terminal;
+  process: ChildProcess | { pid: number; kill(signal?: string): void };
+  pid: number;
   isAlive: boolean;
   promptPattern: RegExp | null;
+  mode: "pty" | "pipe";
   write(data: string): void;
   readScreen(fullScreen?: boolean): string;
   waitForOutput(timeoutMs: number): Promise<{ output: string; isComplete: boolean }>;
