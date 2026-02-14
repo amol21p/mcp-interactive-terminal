@@ -1,0 +1,50 @@
+{
+  "name": "mcp-interactive-terminal",
+  "version": "1.0.0",
+  "description": "MCP server for interactive shell sessions — run REPLs, SSH, databases, and any interactive CLI through AI agents",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-interactive-terminal": "dist/index.js"
+  },
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build",
+    "inspect": "npx @modelcontextprotocol/inspector dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "terminal",
+    "interactive",
+    "shell",
+    "repl",
+    "pty",
+    "claude",
+    "ai",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@xterm/headless": "^5.5.0",
+    "node-pty": "^1.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
