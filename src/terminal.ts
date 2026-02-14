@@ -155,8 +155,9 @@ function pipeInteractiveArgs(command: string, args: string[]): string[] {
     return args;
   }
 
-  // Bash/zsh/sh: add -i for interactive mode (prompts, job control)
+  // Bash/zsh/sh: add -i for interactive mode, but NOT when using -c (command string)
   if (/^(ba)?sh$|^zsh$/.test(base)) {
+    if (args.includes("-c")) return args; // -c means non-interactive command wrapper
     const hasI = args.includes("-i");
     if (!hasI) return ["-i", ...args];
     return args;
@@ -206,17 +207,19 @@ function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> 
     let outputLines: string[] = [];
     let lastOutputTime = Date.now();
     let outputGeneration = 0;
+    // Separate buffer for output since last write()
+    let newOutputBuffer = "";
 
     const appendOutput = (data: Buffer) => {
       const text = data.toString();
-      // Split into lines but preserve partial lines
+      newOutputBuffer += text;
+
+      // Also maintain full output lines for full_screen reads
       const parts = text.split("\n");
       if (parts.length === 1) {
-        // Partial line — append to last line
         if (outputLines.length === 0) outputLines.push("");
         outputLines[outputLines.length - 1] += parts[0];
       } else {
-        // Complete lines
         if (outputLines.length > 0) {
           outputLines[outputLines.length - 1] += parts[0];
         } else {
@@ -250,6 +253,8 @@ function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> 
 
       write(data: string) {
         if (!isAlive) throw new Error("Session is not alive");
+        // Clear new output buffer so readScreen returns only new output
+        newOutputBuffer = "";
         proc.stdin!.write(data);
       },
 
@@ -257,10 +262,8 @@ function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> 
         if (fullScreen) {
           return stripAnsi(outputLines.join("\n"));
         }
-        // Return last ~40 lines (simulating a viewport)
-        const viewportSize = options.rows ?? 40;
-        const start = Math.max(0, outputLines.length - viewportSize);
-        return stripAnsi(outputLines.slice(start).join("\n"));
+        // Return only output received since the last write()
+        return stripAnsi(newOutputBuffer);
       },
 
       async waitForOutput(timeoutMs: number) {
