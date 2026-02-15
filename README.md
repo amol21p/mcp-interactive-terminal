@@ -8,15 +8,20 @@ AI coding agents can't handle interactive commands — no PTY, no stdin streamin
 
 ## The Solution
 
-This MCP server spawns real pseudo-terminals (PTY) and uses xterm-headless (the same terminal emulator as VS Code) to render clean text output. The AI sees exactly what a human would see — no raw ANSI escape codes.
+This MCP server gives AI agents real interactive terminal sessions with clean text output — no raw ANSI escape codes. It supports two modes:
+
+- **PTY mode** (default): Uses node-pty + xterm-headless (the same terminal emulator as VS Code) for pixel-perfect terminal rendering. Full PTY features including resize, cursor positioning, and terminal applications.
+- **Pipe mode** (automatic fallback): When node-pty can't spawn PTYs (e.g., in Claude Code's OS sandbox), falls back to `child_process.spawn` with pipes. Output is cleaned via ANSI stripping. No terminal emulation, but interactive sessions still work with auto-injected flags (`python -u -i`, `bash -i`, `node --interactive`).
+
+The mode is selected automatically — PTY is tried first, pipe mode kicks in if it fails.
 
 ```
 AI Agent (Claude Code, Cursor, etc.)
     ↕  MCP (JSON-RPC over stdio)
 MCP Terminal Server
-    ↕  node-pty (pseudo-terminal)
+    ↕  node-pty (PTY mode) or child_process (pipe mode)
 Interactive Process (rails console, python, psql, ssh, bash...)
-    ↕  xterm-headless (terminal emulation)
+    ↕  xterm-headless (PTY) or ANSI stripping (pipe)
 Clean text output
 ```
 
@@ -149,6 +154,11 @@ All configuration via environment variables:
 | `MCP_TERMINAL_LOG_INPUTS` | `false` | Log all inputs to stderr |
 | `MCP_TERMINAL_IDLE_TIMEOUT` | `0` | Auto-close idle sessions (ms, 0=disabled) |
 | `MCP_TERMINAL_DANGER_DETECTION` | `true` | Enable dangerous command detection |
+| `MCP_TERMINAL_ALLOWED_PATHS` | (none) | Comma-separated paths sessions can access |
+| `MCP_TERMINAL_AUDIT_LOG` | (none) | Path to JSON audit log file |
+| `MCP_TERMINAL_SANDBOX` | `false` | Enable OS-level kernel sandboxing |
+| `MCP_TERMINAL_SANDBOX_ALLOW_WRITE` | `/tmp` | Writable paths in sandbox mode |
+| `MCP_TERMINAL_SANDBOX_ALLOW_NETWORK` | `*` | Allowed network domains in sandbox |
 
 Example with env vars:
 
@@ -170,9 +180,13 @@ Example with env vars:
 
 ## How It Works
 
-### Clean Output via xterm-headless
+### Two Terminal Modes
 
-Instead of dumping raw ANSI escape codes, PTY output is fed into xterm-headless (the same terminal emulator used by VS Code, but headless). The buffer is read as plain text — properly wrapped, cursor-positioned, clean.
+**PTY mode** (node-pty + xterm-headless): PTY output is fed into xterm-headless (the same terminal emulator used by VS Code, but headless). The buffer is read as plain text via `getLine().translateToString()` — properly wrapped, cursor-positioned, clean. This gives pixel-perfect output identical to what a human sees.
+
+**Pipe mode** (child_process fallback): When PTY spawning is blocked (common in sandboxed environments like Claude Code), the server falls back to `child_process.spawn` with piped stdio. Output is cleaned by stripping ANSI escape codes. Programs that need explicit interactive flags get them auto-injected (e.g., `python` gets `-u -i`, `bash` gets `-i`). This mode also supports optional OS-level sandboxing via `@anthropic-ai/sandbox-runtime`.
+
+The mode is logged at startup and reported in session creation responses.
 
 ### Smart "Command Done" Detection
 

@@ -20,7 +20,7 @@ describe("Terminal", () => {
   itPty("spawns a bash session", async () => {
     terminal = await createTerminal({ command: BASH });
     expect(terminal.isAlive).toBe(true);
-    expect(terminal.pty.pid).toBeGreaterThan(0);
+    expect(terminal.pid).toBeGreaterThan(0);
   }, 10000);
 
   itPty("sends a command and reads output", async () => {

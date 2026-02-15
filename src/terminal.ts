@@ -48,7 +48,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
 
   const cols = options.cols ?? 120;
   const rows = options.rows ?? 40;
-  const xterm = new Terminal({ cols, rows, scrollback: 1000 });
+  const xterm = new Terminal({ cols, rows, scrollback: 1000, allowProposedApi: true });
 
   const ptyProcess = pty.spawn(options.command, options.args ?? [], {
     name: "xterm-256color",
@@ -167,7 +167,10 @@ function pipeInteractiveArgs(command: string, args: string[]): string[] {
   return args;
 }
 
-async function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
+/**
+ * Create a pipe-mode terminal directly (exported for testing).
+ */
+export async function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
   const args = pipeInteractiveArgs(options.command, options.args ?? []);
   const envVars = {
     ...process.env,

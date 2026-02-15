@@ -13,6 +13,7 @@ const defaultConfig: ServerConfig = {
   defaultTimeout: 5000,
   blockedCommands: [],
   allowedCommands: [],
+  allowedPaths: [],
   redactSecrets: false,
   logInputs: false,
   idleTimeout: 0,
@@ -20,6 +21,7 @@ const defaultConfig: ServerConfig = {
   sandbox: false,
   sandboxAllowWrite: ["/tmp"],
   sandboxAllowNetwork: ["*"],
+  auditLog: "",
 };
 
 describe("SessionManager", () => {
@@ -87,5 +89,36 @@ describe("SessionManager", () => {
   it("throws on unknown session id", () => {
     manager = new SessionManager(defaultConfig);
     expect(() => manager.getSession("nonexistent")).toThrow(/not found/);
+  });
+
+  it("enforces allowed paths on session creation", async () => {
+    manager = new SessionManager({ ...defaultConfig, allowedPaths: ["/tmp"] });
+
+    await expect(
+      manager.createSession({ command: BASH, cwd: "/usr/local" })
+    ).rejects.toThrow(/not in the allowed paths/);
+  }, 10000);
+
+  itPty("allows sessions within allowed paths", async () => {
+    manager = new SessionManager({ ...defaultConfig, allowedPaths: ["/tmp"] });
+
+    const session = await manager.createSession({ command: BASH, cwd: "/tmp" });
+    expect(session.isAlive).toBe(true);
+  }, 10000);
+
+  it("isPathAllowed checks subdirectories", () => {
+    manager = new SessionManager({ ...defaultConfig, allowedPaths: ["/home/user/projects"] });
+
+    expect(manager.isPathAllowed("/home/user/projects")).toBe(true);
+    expect(manager.isPathAllowed("/home/user/projects/app")).toBe(true);
+    expect(manager.isPathAllowed("/home/user")).toBe(false);
+    expect(manager.isPathAllowed("/etc")).toBe(false);
+  });
+
+  it("allows all paths when allowedPaths is empty", () => {
+    manager = new SessionManager(defaultConfig);
+
+    expect(manager.isPathAllowed("/anywhere")).toBe(true);
+    expect(manager.isPathAllowed("/etc/passwd")).toBe(true);
   });
 });

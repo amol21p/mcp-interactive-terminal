@@ -1,6 +1,6 @@
 {
   "name": "mcp-interactive-terminal",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "MCP server for interactive shell sessions — run REPLs, SSH, databases, and any interactive CLI through AI agents",
   "main": "dist/index.js",
   "bin": {
@@ -19,6 +19,7 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds',process.platform+'-'+process.arch,'spawn-helper'),0o755)}catch{}\"",
     "prepublishOnly": "npm run build",
     "inspect": "npx @modelcontextprotocol/inspector dist/index.js"
   },
