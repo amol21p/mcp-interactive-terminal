@@ -1,9 +1,38 @@
 import { z } from "zod";
+import { resolve as resolvePath } from "node:path";
 import type { SessionManager } from "../session-manager.js";
 import type { ServerConfig, SendCommandOutput } from "../types.js";
 import { sanitize } from "../utils/sanitizer.js";
 import { detectDanger } from "../utils/danger-detector.js";
 import { redactSecrets } from "../utils/secret-redactor.js";
+import { audit } from "../utils/audit-logger.js";
+
+/**
+ * Extract absolute paths from a command string and check them against allowed paths.
+ * Returns the first disallowed path, or null if all are allowed.
+ */
+function findDisallowedPath(input: string, sessionManager: SessionManager): string | null {
+  // Match absolute paths (Unix-style)
+  const pathPattern = /(?:^|\s|=|"|')(\/{1,2}[\w./-]+)/g;
+  let match;
+  while ((match = pathPattern.exec(input)) !== null) {
+    const p = match[1];
+    // Skip common safe references that aren't filesystem writes
+    if (p === "/dev/null" || p === "/dev/stdin" || p === "/dev/stdout" || p === "/dev/stderr") continue;
+    if (!sessionManager.isPathAllowed(p)) {
+      return p;
+    }
+  }
+  // Also check for cd commands that try to escape
+  const cdPattern = /\bcd\s+([^\s;|&]+)/g;
+  while ((match = cdPattern.exec(input)) !== null) {
+    const target = match[1];
+    if (target.startsWith("/") && !sessionManager.isPathAllowed(target)) {
+      return target;
+    }
+  }
+  return null;
+}
 
 export const sendCommandSchema = z.object({
   session_id: z.string().describe("The session ID to send input to"),
@@ -41,6 +70,7 @@ export async function handleSendCommand(
         session.pendingDangerousCommands.delete(confirmKey);
         // Fall through — command was confirmed
       } else {
+        audit("command_blocked_danger", args.session_id, { input: args.input, reason: danger });
         throw new Error(
           `Dangerous command detected: ${danger}. ` +
           `Use the confirm_dangerous_command tool first with a justification.`
@@ -49,6 +79,19 @@ export async function handleSendCommand(
     }
   }
 
+  // Check for paths outside allowed set
+  if (config.allowedPaths.length > 0) {
+    const disallowed = findDisallowedPath(args.input, sessionManager);
+    if (disallowed) {
+      audit("command_blocked_path", args.session_id, { input: args.input, path: disallowed });
+      throw new Error(
+        `Path "${disallowed}" is outside the allowed paths: ${config.allowedPaths.join(", ")}. ` +
+        `Commands can only reference paths within allowed directories.`
+      );
+    }
+  }
+
+  audit("command", args.session_id, { input: args.input });
   sessionManager.touchSession(args.session_id);
 
   // Write input with newline

@@ -42,6 +42,9 @@
     "node-pty": "^1.0.0",
     "zod": "^3.24.0"
   },
+  "optionalDependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.37"
+  },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "typescript": "^5.5.0",

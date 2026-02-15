@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { SessionManager } from "../session-manager.js";
 import type { ServerConfig, CreateSessionOutput } from "../types.js";
+import { audit } from "../utils/audit-logger.js";
 
 export const createSessionSchema = z.object({
   command: z.string().describe("The command to spawn (e.g., 'python3', 'bash', 'psql')"),
@@ -31,6 +32,15 @@ export async function handleCreateSession(
     env: args.env,
     cols: args.cols,
     rows: args.rows,
+  });
+
+  audit("session_create", session.id, {
+    command: args.command,
+    args: args.args,
+    cwd: args.cwd,
+    name: session.name,
+    pid: session.pid,
+    mode: session.terminal.mode,
   });
 
   return {

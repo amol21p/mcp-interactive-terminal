@@ -23,6 +23,8 @@ import {
   confirmDangerousCommandSchema,
   handleConfirmDangerousCommand,
 } from "./tools/confirm-dangerous-command.js";
+import { initSandbox, resetSandbox } from "./sandbox.js";
+import { configureAudit, audit } from "./utils/audit-logger.js";
 
 const config = loadConfig();
 const sessionManager = new SessionManager(config);
@@ -38,6 +40,7 @@ server.tool(
   "create_session",
   "Spawn an interactive terminal session (REPL, shell, database client, SSH, etc.). Returns a session_id for subsequent commands.",
   createSessionSchema.shape,
+  { title: "Create Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   async ({ command, args, name, cwd, env, cols, rows }) => {
     try {
       const result = await handleCreateSession(
@@ -59,6 +62,7 @@ server.tool(
   "send_command",
   "Send a command/input to an interactive session and wait for output. Appends newline automatically. Returns clean text output (no ANSI codes). If a dangerous command is detected, you must use confirm_dangerous_command first.",
   sendCommandSchema.shape,
+  { title: "Send Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   async ({ session_id, input, timeout_ms, max_output_chars }) => {
     try {
       const result = await handleSendCommand(
@@ -80,6 +84,7 @@ server.tool(
   "read_output",
   "Read the current terminal screen without sending any input. Safe read-only operation.",
   readOutputSchema.shape,
+  { title: "Read Output", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   async ({ session_id, full_screen }) => {
     try {
       const result = await handleReadOutput(
@@ -101,6 +106,7 @@ server.tool(
   "list_sessions",
   "List all active interactive terminal sessions. Safe read-only operation.",
   {},
+  { title: "List Sessions", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   async () => {
     try {
       const result = await handleListSessions(sessionManager);
@@ -118,6 +124,7 @@ server.tool(
   "close_session",
   "Close/kill an interactive terminal session.",
   closeSessionSchema.shape,
+  { title: "Close Session", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   async ({ session_id, signal }) => {
     try {
       const result = await handleCloseSession(
@@ -138,6 +145,7 @@ server.tool(
   "send_control",
   "Send a control character or special key to a session (e.g., ctrl+c to interrupt, ctrl+d to send EOF, arrow keys, tab for completion).",
   sendControlSchema.shape,
+  { title: "Send Control", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   async ({ session_id, control }) => {
     try {
       const result = await handleSendControl(
@@ -159,6 +167,7 @@ server.tool(
   "confirm_dangerous_command",
   "Execute a command that was flagged as dangerous by send_command. Requires a justification explaining WHY the command is necessary. This is a separate confirmation step for safety.",
   confirmDangerousCommandSchema.shape,
+  { title: "Confirm Dangerous Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   async ({ session_id, input, justification }) => {
     try {
       const result = await handleConfirmDangerousCommand(
@@ -181,13 +190,27 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
 
+  // Initialize audit logger
+  if (config.auditLog) {
+    configureAudit(config.auditLog);
+  }
+
+  // Initialize sandbox if enabled
+  if (config.sandbox) {
+    await initSandbox(config);
+  }
+
   // Cleanup on shutdown
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
+    audit("server_stop");
     sessionManager.closeAll();
+    await resetSandbox();
     process.exit(0);
   });
-  process.on("SIGTERM", () => {
+  process.on("SIGTERM", async () => {
+    audit("server_stop");
     sessionManager.closeAll();
+    await resetSandbox();
     process.exit(0);
   });
 
@@ -206,6 +229,22 @@ async function main() {
   if (config.allowedCommands.length > 0) {
     console.error(`[mcp-terminal] Allowed commands: ${config.allowedCommands.join(", ")}`);
   }
+  if (config.allowedPaths.length > 0) {
+    console.error(`[mcp-terminal] Allowed paths: ${config.allowedPaths.join(", ")}`);
+  }
+  if (config.auditLog) {
+    console.error(`[mcp-terminal] Audit log: ${config.auditLog}`);
+  }
+
+  audit("server_start", undefined, {
+    maxSessions: config.maxSessions,
+    dangerDetection: config.dangerDetection,
+    sandbox: config.sandbox,
+    redactSecrets: config.redactSecrets,
+    allowedCommands: config.allowedCommands,
+    blockedCommands: config.blockedCommands,
+    allowedPaths: config.allowedPaths,
+  });
 
   await server.connect(transport);
 }

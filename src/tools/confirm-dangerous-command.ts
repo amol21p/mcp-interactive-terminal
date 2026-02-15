@@ -4,6 +4,7 @@ import type { ServerConfig, ConfirmDangerousCommandOutput } from "../types.js";
 import { sanitize } from "../utils/sanitizer.js";
 import { detectDanger } from "../utils/danger-detector.js";
 import { redactSecrets } from "../utils/secret-redactor.js";
+import { audit } from "../utils/audit-logger.js";
 
 export const confirmDangerousCommandSchema = z.object({
   session_id: z.string().describe("The session ID"),
@@ -40,10 +41,11 @@ export async function handleConfirmDangerousCommand(
     );
   }
 
-  console.error(
-    `[mcp-terminal] DANGEROUS COMMAND CONFIRMED [${args.session_id}]: ` +
-    `"${args.input}" | reason: ${danger} | justification: "${args.justification}"`
-  );
+  audit("command_confirmed_danger", args.session_id, {
+    input: args.input,
+    reason: danger,
+    justification: args.justification,
+  });
 
   sessionManager.touchSession(args.session_id);
 

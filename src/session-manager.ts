@@ -4,8 +4,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 import { createTerminal, type TerminalOptions } from "./terminal.js";
 import type { Session, SessionInfo, ServerConfig } from "./types.js";
+import { audit } from "./utils/audit-logger.js";
 
 export class SessionManager {
   private sessions = new Map<string, Session>();
@@ -27,6 +29,9 @@ export class SessionManager {
 
     // Validate command against allowlist/blocklist
     this.validateCommand(options.command);
+
+    // Validate cwd against allowed paths
+    this.validatePath(options.cwd);
 
     const terminal = await createTerminal(options);
     const id = randomUUID().slice(0, 8);
@@ -111,6 +116,29 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Check if an absolute path is within the allowed paths list.
+   * Returns true if no allowedPaths are configured (unrestricted).
+   */
+  isPathAllowed(targetPath: string): boolean {
+    if (this.config.allowedPaths.length === 0) return true;
+    const resolved = resolvePath(targetPath);
+    return this.config.allowedPaths.some((allowed) => {
+      const resolvedAllowed = resolvePath(allowed);
+      return resolved === resolvedAllowed || resolved.startsWith(resolvedAllowed + "/");
+    });
+  }
+
+  private validatePath(cwd?: string): void {
+    if (this.config.allowedPaths.length === 0) return;
+    const target = resolvePath(cwd ?? process.cwd());
+    if (!this.isPathAllowed(target)) {
+      throw new Error(
+        `Working directory "${target}" is not in the allowed paths: ${this.config.allowedPaths.join(", ")}`
+      );
+    }
+  }
+
   private validateCommand(command: string): void {
     const base = command.split("/").pop() ?? command;
 
@@ -132,7 +160,7 @@ export class SessionManager {
     const timer = setTimeout(() => {
       const session = this.sessions.get(id);
       if (session) {
-        console.error(`[mcp-terminal] Session "${id}" (${session.name}) closed due to idle timeout`);
+        audit("session_idle_timeout", id, { name: session.name });
         try {
           this.closeSession(id);
         } catch {

@@ -1,9 +1,30 @@
 import { z } from "zod";
+import { execSync } from "node:child_process";
 import type { SessionManager } from "../session-manager.js";
 import type { ServerConfig, SendControlOutput } from "../types.js";
 import { CONTROL_KEYS } from "../types.js";
 import { sanitize } from "../utils/sanitizer.js";
 import { redactSecrets } from "../utils/secret-redactor.js";
+import { audit } from "../utils/audit-logger.js";
+
+/**
+ * Get all descendant PIDs of a process (children, grandchildren, etc.).
+ * Works on macOS and Linux via pgrep.
+ */
+function getDescendantPids(pid: number): number[] {
+  try {
+    const out = execSync(`pgrep -P ${pid}`, { encoding: "utf-8", timeout: 2000 }).trim();
+    if (!out) return [];
+    const children = out.split("\n").map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
+    const descendants = [...children];
+    for (const child of children) {
+      descendants.push(...getDescendantPids(child));
+    }
+    return descendants;
+  } catch {
+    return []; // pgrep returns exit code 1 if no matches
+  }
+}
 
 export const sendControlSchema = z.object({
   session_id: z.string().describe("The session ID"),
@@ -40,18 +61,30 @@ export async function handleSendControl(
     );
   }
 
+  audit("control", args.session_id, { control: key });
   sessionManager.touchSession(args.session_id);
 
-  // In pipe mode, certain control keys map to signals
+  // In pipe mode, certain control keys need special handling
   if (session.terminal.mode === "pipe") {
-    const signalMap: Record<string, NodeJS.Signals> = {
-      "ctrl+c": "SIGINT",
-      "ctrl+\\": "SIGQUIT",
-      "ctrl+z": "SIGTSTP",
-    };
-    const signal = signalMap[key];
-    if (signal) {
-      session.terminal.process.kill(signal);
+    if (key === "ctrl+d") {
+      // EOF — close stdin
+      const proc = session.terminal.process as import("node:child_process").ChildProcess;
+      proc.stdin?.end();
+    } else if (key === "ctrl+c" || key === "ctrl+\\" || key === "ctrl+z") {
+      // Send signal to all descendant processes (deepest-first), then the shell itself
+      const signalMap: Record<string, NodeJS.Signals> = {
+        "ctrl+c": "SIGINT",
+        "ctrl+\\": "SIGQUIT",
+        "ctrl+z": "SIGTSTP",
+      };
+      const sig = signalMap[key];
+      const descendants = getDescendantPids(session.terminal.pid);
+      // Signal deepest descendants first (reverse order)
+      for (const dpid of descendants.reverse()) {
+        try { process.kill(dpid, sig); } catch { /* already exited */ }
+      }
+      // Also signal the shell process itself
+      try { process.kill(session.terminal.pid, sig); } catch { /* ignore */ }
     } else {
       session.terminal.write(sequence);
     }

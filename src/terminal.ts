@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import type { TerminalWrapper } from "./types.js";
 import { detectPromptPattern, endsWithPrompt } from "./utils/output-detector.js";
 import { stripAnsi } from "./utils/sanitizer.js";
+import { wrapCommand, isSandboxActive } from "./sandbox.js";
 
 const OUTPUT_SETTLE_MS = 300;
 
@@ -166,27 +167,47 @@ function pipeInteractiveArgs(command: string, args: string[]): string[] {
   return args;
 }
 
-function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
-  return new Promise((resolve, reject) => {
-    const args = pipeInteractiveArgs(options.command, options.args ?? []);
-    let proc: ChildProcess;
+async function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> {
+  const args = pipeInteractiveArgs(options.command, options.args ?? []);
+  const envVars = {
+    ...process.env,
+    TERM: "dumb",
+    PYTHONUNBUFFERED: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
+    NODE_NO_READLINE: "1",
+    ...options.env,
+  };
+
+  // If sandbox is active, wrap the command
+  let proc: ChildProcess;
+  if (isSandboxActive()) {
+    const fullCmd = [options.command, ...args].map((a) => a.includes(" ") ? `"${a}"` : a).join(" ");
+    const { command: wrappedCmd } = await wrapCommand(fullCmd);
+    try {
+      proc = spawn(wrappedCmd, {
+        cwd: options.cwd ?? process.cwd(),
+        env: envVars,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: true,
+        detached: true,
+      });
+    } catch (err) {
+      throw new Error(`Failed to spawn sandboxed "${options.command}": ${err}`);
+    }
+  } else {
     try {
       proc = spawn(options.command, args, {
         cwd: options.cwd ?? process.cwd(),
-        env: {
-          ...process.env,
-          TERM: "dumb",
-          PYTHONUNBUFFERED: "1",
-          PYTHONDONTWRITEBYTECODE: "1",
-          NODE_NO_READLINE: "1",
-          ...options.env,
-        },
+        env: envVars,
         stdio: ["pipe", "pipe", "pipe"],
+        detached: true,
       });
     } catch (err) {
-      reject(new Error(`Failed to spawn "${options.command}": ${err}`));
-      return;
+      throw new Error(`Failed to spawn "${options.command}": ${err}`);
     }
+  }
+
+  return new Promise((resolve, reject) => {
 
     if (!proc.pid) {
       // Handle spawn errors that come async
@@ -284,15 +305,15 @@ function createPipeTerminal(options: TerminalOptions): Promise<TerminalWrapper> 
 
       kill(signal?: string) {
         if (isAlive) {
-          const sig = signal as NodeJS.Signals | undefined;
-          proc.kill(sig ?? "SIGTERM");
+          const sig = (signal as NodeJS.Signals) ?? "SIGTERM";
+          try { process.kill(-proc.pid!, sig); } catch { proc.kill(sig); }
           isAlive = false;
         }
       },
 
       dispose() {
         if (isAlive) {
-          proc.kill("SIGTERM");
+          try { process.kill(-proc.pid!, "SIGTERM"); } catch { proc.kill("SIGTERM"); }
           isAlive = false;
         }
       },

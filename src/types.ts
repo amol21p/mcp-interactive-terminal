@@ -8,10 +8,12 @@ export interface ServerConfig {
   defaultTimeout: number;
   blockedCommands: string[];
   allowedCommands: string[];
+  allowedPaths: string[];
   redactSecrets: boolean;
   logInputs: boolean;
   idleTimeout: number;
   dangerDetection: boolean;
+  auditLog: string;
   sandbox: boolean;
   sandboxAllowWrite: string[];
   sandboxAllowNetwork: string[];
@@ -30,10 +32,12 @@ export function loadConfig(): ServerConfig {
     defaultTimeout: parseInt(process.env.MCP_TERMINAL_DEFAULT_TIMEOUT || "5000", 10),
     blockedCommands: envList("MCP_TERMINAL_BLOCKED_COMMANDS"),
     allowedCommands: envList("MCP_TERMINAL_ALLOWED_COMMANDS"),
+    allowedPaths: envList("MCP_TERMINAL_ALLOWED_PATHS"),
     redactSecrets: process.env.MCP_TERMINAL_REDACT_SECRETS === "true",
     logInputs: process.env.MCP_TERMINAL_LOG_INPUTS === "true",
     idleTimeout: parseInt(process.env.MCP_TERMINAL_IDLE_TIMEOUT || "0", 10),
     dangerDetection: process.env.MCP_TERMINAL_DANGER_DETECTION !== "false",
+    auditLog: process.env.MCP_TERMINAL_AUDIT_LOG || "",
     sandbox: process.env.MCP_TERMINAL_SANDBOX === "true",
     sandboxAllowWrite: envList("MCP_TERMINAL_SANDBOX_ALLOW_WRITE", ["/tmp"]),
     sandboxAllowNetwork: envList("MCP_TERMINAL_SANDBOX_ALLOW_NETWORK", ["*"]),
