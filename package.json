@@ -1,6 +1,6 @@
 {
   "name": "mcp-interactive-terminal",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "MCP server for interactive shell sessions — run REPLs, SSH, databases, and any interactive CLI through AI agents",
   "main": "dist/index.js",
   "bin": {

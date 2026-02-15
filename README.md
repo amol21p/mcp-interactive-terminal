@@ -10,7 +10,7 @@ AI coding agents can't handle interactive commands — no PTY, no stdin streamin
 
 This MCP server gives AI agents real interactive terminal sessions with clean text output — no raw ANSI escape codes. It supports two modes:
 
-- **PTY mode** (default): Uses node-pty + xterm-headless (the same terminal emulator as VS Code) for pixel-perfect terminal rendering. Full PTY features including resize, cursor positioning, and terminal applications.
+- **PTY mode** (default): Spawns a real pseudo-terminal and renders output through xterm-headless (the same terminal emulator as VS Code). The AI sees exactly what a human would see — cursor-positioned, line-wrapped, clean text. Supports terminal resize, TUI apps (vim, htop, top), arrow keys, tab completion, 256-color, and scrollback.
 - **Pipe mode** (automatic fallback): When node-pty can't spawn PTYs (e.g., in Claude Code's OS sandbox), falls back to `child_process.spawn` with pipes. Output is cleaned via ANSI stripping. No terminal emulation, but interactive sessions still work with auto-injected flags (`python -u -i`, `bash -i`, `node --interactive`).
 
 The mode is selected automatically — PTY is tried first, pipe mode kicks in if it fails.
@@ -182,11 +182,35 @@ Example with env vars:
 
 ### Two Terminal Modes
 
-**PTY mode** (node-pty + xterm-headless): PTY output is fed into xterm-headless (the same terminal emulator used by VS Code, but headless). The buffer is read as plain text via `getLine().translateToString()` — properly wrapped, cursor-positioned, clean. This gives pixel-perfect output identical to what a human sees.
+**PTY mode** (node-pty + xterm-headless) is the default and gives you the full terminal experience:
 
-**Pipe mode** (child_process fallback): When PTY spawning is blocked (common in sandboxed environments like Claude Code), the server falls back to `child_process.spawn` with piped stdio. Output is cleaned by stripping ANSI escape codes. Programs that need explicit interactive flags get them auto-injected (e.g., `python` gets `-u -i`, `bash` gets `-i`). This mode also supports optional OS-level sandboxing via `@anthropic-ai/sandbox-runtime`.
+- Pixel-perfect output — xterm-headless (same engine as VS Code's terminal) renders the screen exactly as a human would see it
+- Cursor positioning — programs that overwrite parts of the screen (progress bars, spinners, `\r` overwrites) render correctly, showing only the final state
+- Terminal resize — dynamically change `cols` and `rows` mid-session
+- TUI/ncurses apps — `vim`, `htop`, `top`, `less`, `tmux` all work because there's a real PTY underneath
+- Full keyboard support — arrow keys for command history, tab completion, ctrl+r reverse search, ctrl+c/d/z signals, home/end, and 20+ control keys
+- Scrollback buffer — 1000 lines of history via `full_screen: true`
+- 256-color support — `TERM=xterm-256color` is set automatically
 
-The mode is logged at startup and reported in session creation responses.
+**Pipe mode** (child_process fallback) activates automatically when PTY spawning is blocked (e.g., in Claude Code's OS sandbox):
+
+- Interactive sessions still work — auto-injects flags like `python -u -i`, `bash -i`, `node --interactive`
+- ANSI stripping — escape codes are removed, but no terminal emulation
+- Control keys still work — ctrl+c sends SIGINT to the process tree, ctrl+d sends EOF
+- Optional OS-level sandboxing via `@anthropic-ai/sandbox-runtime`
+
+### PTY vs Pipe — what the AI sees
+
+| Scenario | PTY mode | Pipe mode |
+|----------|----------|-----------|
+| `printf "\rProgress: 3/3"` | `Progress: 3/3` | `Progress: 1/3Progress: 2/3Progress: 3/3` |
+| `printf "ABCDEF\033[4DXXXX"` | `ABXXXX` | `ABCDEFXXXX` |
+| Tabs (`\t`) | Aligned to 8-char stops | Raw `\t` characters |
+| ANSI colors `\033[31mred\033[0m` | `red` | `red` |
+| `vim`, `htop`, `top` | Readable screen | Garbled escape codes |
+| Arrow up (history) | Previous command | Works |
+| Tab completion | Works | Works |
+| Terminal resize | Works | No-op |
 
 ### Smart "Command Done" Detection
 
