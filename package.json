@@ -1,6 +1,6 @@
 {
   "name": "mcp-interactive-terminal",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "MCP server for interactive shell sessions — run REPLs, SSH, databases, and any interactive CLI through AI agents",
   "main": "dist/index.js",
   "bin": {
@@ -33,6 +33,14 @@
     "ai",
     "model-context-protocol"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amol21p/mcp-interactive-terminal.git"
+  },
+  "homepage": "https://github.com/amol21p/mcp-interactive-terminal#readme",
+  "bugs": {
+    "url": "https://github.com/amol21p/mcp-interactive-terminal/issues"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=18"
