@@ -1,31 +1,26 @@
 # mcp-interactive-terminal
 
-MCP server for interactive shell sessions. Run REPLs, SSH, database clients, and any interactive CLI through AI agents like Claude Code, Cursor, and others.
+[![npm version](https://img.shields.io/npm/v/mcp-interactive-terminal.svg)](https://www.npmjs.com/package/mcp-interactive-terminal)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
 
-## The Problem
+MCP server that gives AI agents (Claude Code, Cursor, Windsurf, etc.) real interactive terminal sessions. Run REPLs, SSH, database clients, and any interactive CLI — with clean text output, smart completion detection, and 7-layer security.
 
-AI coding agents can't handle interactive commands — no PTY, no stdin streaming. You can't run `rails console`, `python`, `psql`, `ssh`, or any REPL through them.
+## Why This Exists
 
-## The Solution
-
-This MCP server gives AI agents real interactive terminal sessions with clean text output — no raw ANSI escape codes. It supports two modes:
-
-- **PTY mode** (default): Spawns a real pseudo-terminal and renders output through xterm-headless (the same terminal emulator as VS Code). The AI sees exactly what a human would see — cursor-positioned, line-wrapped, clean text. Supports terminal resize, TUI apps (vim, htop, top), arrow keys, tab completion, 256-color, and scrollback.
-- **Pipe mode** (automatic fallback): When node-pty can't spawn PTYs (e.g., in Claude Code's OS sandbox), falls back to `child_process.spawn` with pipes. Output is cleaned via ANSI stripping. No terminal emulation, but interactive sessions still work with auto-injected flags (`python -u -i`, `bash -i`, `node --interactive`).
-
-The mode is selected automatically — PTY is tried first, pipe mode kicks in if it fails.
+AI coding agents can't handle interactive commands. There's no PTY, no stdin streaming. You can't run `rails console`, `python`, `psql`, `ssh`, or any REPL through them. This MCP server fixes that.
 
 ```
 AI Agent (Claude Code, Cursor, etc.)
     ↕  MCP (JSON-RPC over stdio)
-MCP Terminal Server
-    ↕  node-pty (PTY mode) or child_process (pipe mode)
+mcp-interactive-terminal
+    ↕  node-pty + xterm-headless
 Interactive Process (rails console, python, psql, ssh, bash...)
-    ↕  xterm-headless (PTY) or ANSI stripping (pipe)
-Clean text output
+    ↕
+Clean text output (exactly what a human would see)
 ```
 
-## Quick Start
+## Install
 
 ### Claude Code
 
@@ -33,9 +28,11 @@ Clean text output
 claude mcp add terminal -- npx -y mcp-interactive-terminal
 ```
 
-### Manual Configuration
+That's it. The server is now available. Ask Claude to "open a python REPL and calculate 2**100".
 
-Add to `~/.claude.json` or `.mcp.json`:
+### Cursor
+
+Go to **Settings > MCP Servers**, click **Add Server**, and enter:
 
 ```json
 {
@@ -48,7 +45,107 @@ Add to `~/.claude.json` or `.mcp.json`:
 }
 ```
 
+### Windsurf
+
+Add to your MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "terminal": {
+      "command": "npx",
+      "args": ["-y", "mcp-interactive-terminal"]
+    }
+  }
+}
+```
+
+### VS Code (GitHub Copilot)
+
+Add to your `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "terminal": {
+      "command": "npx",
+      "args": ["-y", "mcp-interactive-terminal"]
+    }
+  }
+}
+```
+
+### Any MCP Client
+
+The server communicates over stdio using the [Model Context Protocol](https://modelcontextprotocol.io/). Any MCP-compatible client can use it with the same `npx -y mcp-interactive-terminal` command.
+
+## Real-World Examples
+
+### Rails Console
+
+```
+You: "Open rails console for staging and check the user count"
+
+Agent creates session → bash
+Agent sends: cd /path/to/app && rails console -e staging
+Agent sends: User.count
+Agent returns: 1,847,293
+```
+
+### Python REPL
+
+```
+You: "Open python and test my sorting algorithm"
+
+Agent creates session → python3
+Agent sends: def quicksort(arr): ...
+Agent sends: quicksort([3, 1, 4, 1, 5, 9])
+Agent returns: [1, 1, 3, 4, 5, 9]
+```
+
+### Database Client
+
+```
+You: "Connect to postgres and show me the largest tables"
+
+Agent creates session → psql -U myuser mydb
+Agent sends: SELECT tablename, pg_size_pretty(pg_total_relation_size(tablename::text)) ...
+Agent returns: formatted table of results
+```
+
+### SSH
+
+```
+You: "SSH into the staging server and check disk usage"
+
+Agent creates session → ssh user@staging.example.com
+Agent sends: df -h
+Agent returns: disk usage table
+```
+
+### Docker
+
+```
+You: "Open a shell in my running container and check the logs"
+
+Agent creates session → docker exec -it my-container bash
+Agent sends: tail -100 /var/log/app.log
+Agent returns: last 100 log lines
+```
+
+### Node.js REPL
+
+```
+You: "Open node and test the date parsing logic"
+
+Agent creates session → node
+Agent sends: new Date('2024-02-29').toISOString()
+Agent returns: 2024-02-29T00:00:00.000Z
+```
+
 ## Tools
+
+The server exposes 7 MCP tools:
 
 ### `create_session` — Spawn an interactive process
 
@@ -57,7 +154,15 @@ Add to `~/.claude.json` or `.mcp.json`:
 → { "session_id": "a1b2c3d4", "name": "my-python", "pid": 12345 }
 ```
 
-**Parameters:** `command` (required), `args?`, `name?`, `cwd?`, `env?`, `cols?` (default 120), `rows?` (default 40)
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `command` | Yes | — | Command to run (bash, python3, psql, ssh, etc.) |
+| `args` | No | `[]` | Command arguments |
+| `name` | No | auto | Human-readable session name |
+| `cwd` | No | server cwd | Working directory |
+| `env` | No | `{}` | Additional environment variables |
+| `cols` | No | `120` | Terminal columns |
+| `rows` | No | `40` | Terminal rows |
 
 ### `send_command` — Send input and get output
 
@@ -66,9 +171,14 @@ Add to `~/.claude.json` or `.mcp.json`:
 → { "output": "2", "is_complete": true, "is_alive": true }
 ```
 
-**Parameters:** `session_id`, `input`, `timeout_ms?` (default 5000), `max_output_chars?`
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `session_id` | Yes | — | Target session |
+| `input` | Yes | — | Command/input to send (newline appended automatically) |
+| `timeout_ms` | No | `5000` | Max wait time for output |
+| `max_output_chars` | No | `20000` | Truncate output beyond this |
 
-Dangerous commands (rm -rf, DROP TABLE, curl|bash, etc.) are blocked and require `confirm_dangerous_command` first.
+Dangerous commands (`rm -rf`, `DROP TABLE`, `curl|bash`, etc.) are blocked — the agent must use `confirm_dangerous_command` first.
 
 ### `read_output` — Read terminal screen (read-only)
 
@@ -77,13 +187,15 @@ Dangerous commands (rm -rf, DROP TABLE, curl|bash, etc.) are blocked and require
 → { "output": ">>> ", "is_alive": true }
 ```
 
-**Parameters:** `session_id`, `full_screen?` (default false)
+Safe to auto-approve — this only reads, never sends input.
 
 ### `list_sessions` — List active sessions (read-only)
 
 ```json
-→ [{ "session_id": "a1b2c3d4", "name": "my-python", "command": "python3", "pid": 12345, "is_alive": true, "created_at": "..." }]
+→ [{ "session_id": "a1b2c3d4", "name": "my-python", "command": "python3", "pid": 12345, "is_alive": true }]
 ```
+
+Safe to auto-approve.
 
 ### `close_session` — Kill a session
 
@@ -92,8 +204,6 @@ Dangerous commands (rm -rf, DROP TABLE, curl|bash, etc.) are blocked and require
 → { "success": true }
 ```
 
-**Parameters:** `session_id`, `signal?` (default SIGTERM)
-
 ### `send_control` — Send control characters
 
 ```json
@@ -101,7 +211,7 @@ Dangerous commands (rm -rf, DROP TABLE, curl|bash, etc.) are blocked and require
 → { "output": "^C\n>>>" }
 ```
 
-**Supported keys:** ctrl+c, ctrl+d, ctrl+z, ctrl+l, ctrl+r, tab, escape, up, down, left, right, enter, backspace, delete, home, end, and more.
+Supported: `ctrl+c`, `ctrl+d`, `ctrl+z`, `ctrl+l`, `ctrl+r`, `tab`, `escape`, `up`, `down`, `left`, `right`, `enter`, `backspace`, `delete`, `home`, `end`, and more.
 
 ### `confirm_dangerous_command` — Two-step safety confirmation
 
@@ -110,23 +220,63 @@ Dangerous commands (rm -rf, DROP TABLE, curl|bash, etc.) are blocked and require
 → { "output": "...", "is_complete": true, "is_alive": true }
 ```
 
-Required when `send_command` detects a dangerous pattern. The AI must provide a justification.
+Required when `send_command` detects a dangerous pattern. The agent must explain why the command is necessary. This is a **separate tool** — even if `send_command` is auto-approved, this requires its own permission.
+
+## How It Works
+
+### Two Terminal Modes
+
+**PTY mode** (default) — uses `node-pty` + `@xterm/headless` (the same terminal emulator as VS Code):
+
+- Clean output — the AI sees exactly what a human would see on screen
+- Cursor positioning, progress bars, `\r` overwrites all render correctly
+- Full keyboard: arrow keys, tab completion, ctrl+c/d/z, home/end
+- Terminal resize, TUI apps (vim, htop, top), 256-color, 1000-line scrollback
+
+**Pipe mode** (automatic fallback) — activates when node-pty can't load (e.g., in sandboxed environments):
+
+- Interactive sessions still work via `child_process.spawn` with auto-injected flags (`python -u -i`, `bash -i`, etc.)
+- ANSI codes stripped, control keys still work
+- No terminal emulation, but covers the basics
+
+The mode is selected automatically — PTY is tried first, pipe mode kicks in if it fails.
+
+### What the AI sees: PTY vs Pipe
+
+| Scenario | PTY mode | Pipe mode |
+|----------|----------|-----------|
+| `printf "\rProgress: 3/3"` | `Progress: 3/3` | `Progress: 1/3Progress: 2/3Progress: 3/3` |
+| ANSI colors | Stripped cleanly | Stripped via regex |
+| vim, htop, top | Readable screen | Garbled |
+| Arrow keys, tab completion | Works | Works |
+| Terminal resize | Works | No-op |
+
+### Smart "Command Done" Detection
+
+Instead of blindly waiting a fixed time, the server uses a layered strategy:
+
+1. **Process exit** — if the process died, command is done
+2. **Prompt detection** — auto-detects the session's prompt at startup (bash `$`, python `>>>`, psql `#`, etc.), watches for it to reappear
+3. **Output settling** — no new output for 300ms = probably done
+4. **Timeout** — always returns after `timeout_ms` with `is_complete: false`
 
 ## Security
 
-Seven-layer defense-in-depth model:
+Seven-layer defense-in-depth:
 
 | Layer | What It Does | Default |
 |-------|-------------|---------|
 | MCP Tool Annotations | `readOnlyHint`/`destructiveHint` on each tool | Always on |
-| Confirmation flow | Dangerous patterns require `confirm_dangerous_command` | Always on |
-| Input pattern detection | Detect rm -rf, DROP TABLE, curl\|bash, etc. | Always on |
-| Command blocklist/allowlist | Block/allow specific commands | Configurable |
-| OS-level sandbox | Kernel-level process sandboxing | Off (opt-in) |
-| Secret redaction | Redact AWS keys, tokens, private keys in output | Off (opt-in) |
-| Resource limits | Max sessions, output cap, idle timeout | Always on |
+| Confirmation Flow | Dangerous patterns require `confirm_dangerous_command` | Always on |
+| Input Pattern Detection | Detect rm -rf, DROP TABLE, curl\|bash, etc. | Always on |
+| Command Blocklist/Allowlist | Block/allow specific commands | Configurable |
+| OS-Level Sandbox | Kernel-level process sandboxing via `@anthropic-ai/sandbox-runtime` | Off (opt-in) |
+| Secret Redaction | Redact AWS keys, tokens, private keys in output | Off (opt-in) |
+| Resource Limits | Max sessions, output cap, idle timeout, audit logging | Always on |
 
-**Recommended permission configuration** — only auto-approve read-only tools:
+### Recommended Permissions
+
+Only auto-approve the read-only tools:
 
 ```json
 {
@@ -139,28 +289,11 @@ Seven-layer defense-in-depth model:
 }
 ```
 
+This way `send_command`, `create_session`, and especially `confirm_dangerous_command` always require human approval.
+
 ## Configuration
 
-All configuration via environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP_TERMINAL_MAX_SESSIONS` | `10` | Max concurrent sessions |
-| `MCP_TERMINAL_MAX_OUTPUT` | `20000` | Max output chars per read |
-| `MCP_TERMINAL_DEFAULT_TIMEOUT` | `5000` | Default wait timeout (ms) |
-| `MCP_TERMINAL_BLOCKED_COMMANDS` | (none) | Comma-separated blocklist |
-| `MCP_TERMINAL_ALLOWED_COMMANDS` | (none) | Comma-separated allowlist |
-| `MCP_TERMINAL_REDACT_SECRETS` | `false` | Redact detected secrets |
-| `MCP_TERMINAL_LOG_INPUTS` | `false` | Log all inputs to stderr |
-| `MCP_TERMINAL_IDLE_TIMEOUT` | `0` | Auto-close idle sessions (ms, 0=disabled) |
-| `MCP_TERMINAL_DANGER_DETECTION` | `true` | Enable dangerous command detection |
-| `MCP_TERMINAL_ALLOWED_PATHS` | (none) | Comma-separated paths sessions can access |
-| `MCP_TERMINAL_AUDIT_LOG` | (none) | Path to JSON audit log file |
-| `MCP_TERMINAL_SANDBOX` | `false` | Enable OS-level kernel sandboxing |
-| `MCP_TERMINAL_SANDBOX_ALLOW_WRITE` | `/tmp` | Writable paths in sandbox mode |
-| `MCP_TERMINAL_SANDBOX_ALLOW_NETWORK` | `*` | Allowed network domains in sandbox |
-
-Example with env vars:
+All settings via environment variables. Pass them in your MCP config:
 
 ```json
 {
@@ -178,52 +311,132 @@ Example with env vars:
 }
 ```
 
-## How It Works
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_TERMINAL_MAX_SESSIONS` | `10` | Max concurrent sessions |
+| `MCP_TERMINAL_MAX_OUTPUT` | `20000` | Max output chars per read |
+| `MCP_TERMINAL_DEFAULT_TIMEOUT` | `5000` | Default wait timeout (ms) |
+| `MCP_TERMINAL_BLOCKED_COMMANDS` | — | Comma-separated blocklist |
+| `MCP_TERMINAL_ALLOWED_COMMANDS` | — | Comma-separated allowlist (if set, only these are allowed) |
+| `MCP_TERMINAL_ALLOWED_PATHS` | — | Comma-separated paths sessions can access |
+| `MCP_TERMINAL_REDACT_SECRETS` | `false` | Redact AWS keys, tokens, private keys in output |
+| `MCP_TERMINAL_LOG_INPUTS` | `false` | Log all inputs to stderr (for debugging) |
+| `MCP_TERMINAL_IDLE_TIMEOUT` | `0` | Auto-close idle sessions (ms, 0 = disabled) |
+| `MCP_TERMINAL_DANGER_DETECTION` | `true` | Enable dangerous command confirmation flow |
+| `MCP_TERMINAL_AUDIT_LOG` | — | Path to JSON audit log file |
+| `MCP_TERMINAL_SANDBOX` | `false` | Enable OS-level kernel sandboxing |
+| `MCP_TERMINAL_SANDBOX_ALLOW_WRITE` | `/tmp` | Writable paths in sandbox mode |
+| `MCP_TERMINAL_SANDBOX_ALLOW_NETWORK` | `*` | Allowed network domains in sandbox |
 
-### Two Terminal Modes
+## Troubleshooting
 
-**PTY mode** (node-pty + xterm-headless) is the default and gives you the full terminal experience:
+### "Tools not showing up" / Server fails silently
 
-- Pixel-perfect output — xterm-headless (same engine as VS Code's terminal) renders the screen exactly as a human would see it
-- Cursor positioning — programs that overwrite parts of the screen (progress bars, spinners, `\r` overwrites) render correctly, showing only the final state
-- Terminal resize — dynamically change `cols` and `rows` mid-session
-- TUI/ncurses apps — `vim`, `htop`, `top`, `less`, `tmux` all work because there's a real PTY underneath
-- Full keyboard support — arrow keys for command history, tab completion, ctrl+r reverse search, ctrl+c/d/z signals, home/end, and 20+ control keys
-- Scrollback buffer — 1000 lines of history via `full_screen: true`
-- 256-color support — `TERM=xterm-256color` is set automatically
+MCP servers that fail to start often show no error in the client. Check:
 
-**Pipe mode** (child_process fallback) activates automatically when PTY spawning is blocked (e.g., in Claude Code's OS sandbox):
+```bash
+# Test the server directly:
+npx -y mcp-interactive-terminal
 
-- Interactive sessions still work — auto-injects flags like `python -u -i`, `bash -i`, `node --interactive`
-- ANSI stripping — escape codes are removed, but no terminal emulation
-- Control keys still work — ctrl+c sends SIGINT to the process tree, ctrl+d sends EOF
-- Optional OS-level sandboxing via `@anthropic-ai/sandbox-runtime`
+# You should see "[mcp-terminal] Starting MCP Interactive Terminal Server" on stderr.
+# If you see an error, that's what's failing.
+```
 
-### PTY vs Pipe — what the AI sees
+### Node.js version too old
 
-| Scenario | PTY mode | Pipe mode |
-|----------|----------|-----------|
-| `printf "\rProgress: 3/3"` | `Progress: 3/3` | `Progress: 1/3Progress: 2/3Progress: 3/3` |
-| `printf "ABCDEF\033[4DXXXX"` | `ABXXXX` | `ABCDEFXXXX` |
-| Tabs (`\t`) | Aligned to 8-char stops | Raw `\t` characters |
-| ANSI colors `\033[31mred\033[0m` | `red` | `red` |
-| `vim`, `htop`, `top` | Readable screen | Garbled escape codes |
-| Arrow up (history) | Previous command | Works |
-| Tab completion | Works | Works |
-| Terminal resize | Works | No-op |
+The server requires Node.js >= 18. If you see errors about unsupported syntax or missing APIs:
 
-### Smart "Command Done" Detection
+```bash
+node --version  # Must be >= 18
 
-Layered strategy (most to least reliable):
+# If using nvm:
+nvm install 18 && nvm use 18
 
-1. **Process exit** — If the process died, command is done
-2. **Prompt detection** — Auto-detects the session's prompt at startup (bash `$`, python `>>>`, psql `#`, etc.), watches for it to reappear
-3. **Output settling** — No new output for 300ms
-4. **Timeout** — Always returns after `timeout_ms` with `is_complete: false`
+# If using volta:
+volta install node@18
+```
+
+**For nvm/volta/fnm users**: `npx` may use a different Node version than your shell. Use an absolute path:
+
+```json
+{
+  "mcpServers": {
+    "terminal": {
+      "command": "/Users/you/.nvm/versions/node/v22.0.0/bin/npx",
+      "args": ["-y", "mcp-interactive-terminal"]
+    }
+  }
+}
+```
+
+Find your path with: `which npx`
+
+### node-pty compilation errors
+
+`node-pty` is a native module that requires build tools. If it fails to compile, the server automatically falls back to **pipe mode** — interactive sessions still work, just without terminal emulation.
+
+If you want full PTY support:
+
+```bash
+# macOS:
+xcode-select --install
+
+# Ubuntu/Debian:
+sudo apt-get install -y make python3 build-essential
+
+# RHEL/Fedora:
+sudo yum install -y make python3 gcc gcc-c++
+```
+
+### Session dies immediately
+
+Some commands need to be run inside a shell rather than directly:
+
+```
+# Instead of:  create_session({ command: "rails console -e staging" })
+# Do this:     create_session({ command: "bash" })
+#              send_command({ input: "rails console -e staging" })
+```
+
+This is because `create_session` runs the command directly (like `exec`), not through a shell. Spawning `bash` first gives you a full shell environment.
+
+### Output looks garbled
+
+If output contains escape codes or looks wrong, you're likely in **pipe mode** (node-pty failed to load). Check the server logs for `"falling back to pipe mode"`. Install build tools (see above) to enable PTY mode.
+
+### Timeout too short for long-running commands
+
+Increase the timeout per-command:
+
+```json
+{ "session_id": "...", "input": "bundle install", "timeout_ms": 60000 }
+```
+
+Or globally via environment variable:
+
+```json
+{ "env": { "MCP_TERMINAL_DEFAULT_TIMEOUT": "30000" } }
+```
+
+## Comparison with Alternatives
+
+| Feature | mcp-interactive-terminal | App-specific terminal servers | Generic shell MCP servers |
+|---------|------------------------|-------------------------------|--------------------------|
+| Cross-platform | Yes | Often single-app only | Varies |
+| Clean output (xterm-headless) | Yes | No (screen scrape) | No (raw PTY dump) |
+| Smart completion detection | 4-layer algorithm | No | Basic timeout |
+| Security layers | 7 (confirmation flow, sandbox, redaction, etc.) | None | Basic |
+| Dangerous command confirmation | Yes (separate tool) | No | No |
+| MCP tool annotations | Yes | No | No |
+| Background sessions | Yes | No (uses active tab) | Yes |
+| Focused API | 7 tools | 2-3 tools | 15-20+ tools (scope creep) |
+| Install | `npx -y` (zero-config) | Requires specific app | Varies |
 
 ## Development
 
 ```bash
+git clone https://github.com/amol21p/mcp-interactive-terminal.git
+cd mcp-interactive-terminal
 npm install
 npm run build
 npm test

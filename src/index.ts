@@ -1,11 +1,13 @@
-#!/usr/bin/env node
-
 /**
  * MCP Interactive Terminal Server
  *
  * Provides AI agents with interactive terminal sessions via the
  * Model Context Protocol. Supports REPLs, SSH, databases, and
  * any interactive CLI.
+ *
+ * NOTE: The CLI entry point is bin.ts (dist/bin.js), which performs
+ * a Node version check before importing this module. If you import
+ * this module directly, you are responsible for ensuring Node >= 18.14.1.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -214,7 +216,8 @@ async function main() {
     process.exit(0);
   });
 
-  console.error("[mcp-terminal] Starting MCP Interactive Terminal Server v1.0.0");
+  console.error(`[mcp-terminal] Starting MCP Interactive Terminal Server`);
+  console.error(`[mcp-terminal] Node ${process.versions.node} | ${process.platform} ${process.arch}`);
   console.error(`[mcp-terminal] Config: maxSessions=${config.maxSessions}, maxOutput=${config.maxOutput}, defaultTimeout=${config.defaultTimeout}ms`);
 
   if (config.dangerDetection) {

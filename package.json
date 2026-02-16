@@ -4,7 +4,7 @@
   "description": "MCP server for interactive shell sessions — run REPLs, SSH, databases, and any interactive CLI through AI agents",
   "main": "dist/index.js",
   "bin": {
-    "mcp-interactive-terminal": "dist/index.js"
+    "mcp-interactive-terminal": "dist/bin.js"
   },
   "type": "module",
   "files": [
@@ -14,7 +14,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && chmod +x dist/index.js",
+    "build": "tsc && chmod +x dist/bin.js dist/index.js",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
@@ -44,15 +44,15 @@
   },
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=18.14.1"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@xterm/headless": "^5.5.0",
-    "node-pty": "^1.0.0",
     "zod": "^3.24.0"
   },
   "optionalDependencies": {
+    "node-pty": "^1.0.0",
     "@anthropic-ai/sandbox-runtime": "^0.0.37"
   },
   "devDependencies": {
