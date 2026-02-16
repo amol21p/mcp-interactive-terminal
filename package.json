@@ -1,6 +1,6 @@
 {
   "name": "mcp-interactive-terminal",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "mcpName": "io.github.amol21p/interactive-terminal",
   "description": "MCP server that gives AI agents (Claude Code, Cursor, Windsurf) real interactive terminal sessions — run REPLs, SSH, databases, Docker, and any interactive CLI with clean output and smart completion detection",
   "main": "dist/index.js",

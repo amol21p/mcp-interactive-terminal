@@ -35,7 +35,7 @@ export function loadConfig(): ServerConfig {
     allowedPaths: envList("MCP_TERMINAL_ALLOWED_PATHS"),
     redactSecrets: process.env.MCP_TERMINAL_REDACT_SECRETS === "true",
     logInputs: process.env.MCP_TERMINAL_LOG_INPUTS === "true",
-    idleTimeout: parseInt(process.env.MCP_TERMINAL_IDLE_TIMEOUT || "0", 10),
+    idleTimeout: parseInt(process.env.MCP_TERMINAL_IDLE_TIMEOUT || "1800000", 10),
     dangerDetection: process.env.MCP_TERMINAL_DANGER_DETECTION !== "false",
     auditLog: process.env.MCP_TERMINAL_AUDIT_LOG || "",
     sandbox: process.env.MCP_TERMINAL_SANDBOX === "true",

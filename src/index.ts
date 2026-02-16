@@ -12,7 +12,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadConfig } from "./types.js";
+import { loadConfig, type ServerConfig } from "./types.js";
 import { SessionManager } from "./session-manager.js";
 
 import { createSessionSchema, handleCreateSession } from "./tools/create-session.js";
@@ -28,168 +28,177 @@ import {
 import { initSandbox, resetSandbox } from "./sandbox.js";
 import { configureAudit, audit } from "./utils/audit-logger.js";
 
-const config = loadConfig();
-const sessionManager = new SessionManager(config);
+/**
+ * Create a configured McpServer with all tools registered.
+ * Does NOT connect to any transport — caller is responsible for that.
+ */
+function createServer(cfg?: ServerConfig) {
+  const config = cfg || loadConfig();
+  const sessionManager = new SessionManager(config);
 
-const server = new McpServer({
-  name: "mcp-interactive-terminal",
-  version: "1.0.0",
-});
+  const server = new McpServer({
+    name: "mcp-interactive-terminal",
+    version: "1.0.0",
+  });
 
-// --- Tool Registration ---
+  // --- Tool Registration ---
 
-server.tool(
-  "create_session",
-  "Spawn an interactive terminal session (REPL, shell, database client, SSH, etc.). Returns a session_id for subsequent commands.",
-  createSessionSchema.shape,
-  { title: "Create Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  async ({ command, args, name, cwd, env, cols, rows }) => {
-    try {
-      const result = await handleCreateSession(
-        { command, args, name, cwd, env, cols, rows },
-        sessionManager,
-        config,
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-  },
-);
+  server.tool(
+    "create_session",
+    "Spawn an interactive terminal session (REPL, shell, database client, SSH, etc.). Returns a session_id for subsequent commands.",
+    createSessionSchema.shape,
+    { title: "Create Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    async ({ command, args, name, cwd, env, cols, rows }) => {
+      try {
+        const result = await handleCreateSession(
+          { command, args, name, cwd, env, cols, rows },
+          sessionManager,
+          config,
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
-server.tool(
-  "send_command",
-  "Send a command/input to an interactive session and wait for output. Appends newline automatically. Returns clean text output (no ANSI codes). If a dangerous command is detected, you must use confirm_dangerous_command first.",
-  sendCommandSchema.shape,
-  { title: "Send Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  async ({ session_id, input, timeout_ms, max_output_chars }) => {
-    try {
-      const result = await handleSendCommand(
-        { session_id, input, timeout_ms, max_output_chars },
-        sessionManager,
-        config,
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-  },
-);
+  server.tool(
+    "send_command",
+    "Send a command/input to an interactive session and wait for output. Appends newline automatically. Returns clean text output (no ANSI codes). If a dangerous command is detected, you must use confirm_dangerous_command first.",
+    sendCommandSchema.shape,
+    { title: "Send Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    async ({ session_id, input, timeout_ms, max_output_chars }) => {
+      try {
+        const result = await handleSendCommand(
+          { session_id, input, timeout_ms, max_output_chars },
+          sessionManager,
+          config,
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
-server.tool(
-  "read_output",
-  "Read the current terminal screen without sending any input. Safe read-only operation.",
-  readOutputSchema.shape,
-  { title: "Read Output", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  async ({ session_id, full_screen }) => {
-    try {
-      const result = await handleReadOutput(
-        { session_id, full_screen },
-        sessionManager,
-        config,
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-  },
-);
+  server.tool(
+    "read_output",
+    "Read the current terminal screen without sending any input. Safe read-only operation.",
+    readOutputSchema.shape,
+    { title: "Read Output", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async ({ session_id, full_screen }) => {
+      try {
+        const result = await handleReadOutput(
+          { session_id, full_screen },
+          sessionManager,
+          config,
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
-server.tool(
-  "list_sessions",
-  "List all active interactive terminal sessions. Safe read-only operation.",
-  {},
-  { title: "List Sessions", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  async () => {
-    try {
-      const result = await handleListSessions(sessionManager);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-  },
-);
+  server.tool(
+    "list_sessions",
+    "List all active interactive terminal sessions. Safe read-only operation.",
+    {},
+    { title: "List Sessions", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async () => {
+      try {
+        const result = await handleListSessions(sessionManager);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
-server.tool(
-  "close_session",
-  "Close/kill an interactive terminal session.",
-  closeSessionSchema.shape,
-  { title: "Close Session", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  async ({ session_id, signal }) => {
-    try {
-      const result = await handleCloseSession(
-        { session_id, signal },
-        sessionManager,
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-  },
-);
+  server.tool(
+    "close_session",
+    "Close/kill an interactive terminal session.",
+    closeSessionSchema.shape,
+    { title: "Close Session", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    async ({ session_id, signal }) => {
+      try {
+        const result = await handleCloseSession(
+          { session_id, signal },
+          sessionManager,
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
-server.tool(
-  "send_control",
-  "Send a control character or special key to a session (e.g., ctrl+c to interrupt, ctrl+d to send EOF, arrow keys, tab for completion).",
-  sendControlSchema.shape,
-  { title: "Send Control", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  async ({ session_id, control }) => {
-    try {
-      const result = await handleSendControl(
-        { session_id, control },
-        sessionManager,
-        config,
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-  },
-);
+  server.tool(
+    "send_control",
+    "Send a control character or special key to a session (e.g., ctrl+c to interrupt, ctrl+d to send EOF, arrow keys, tab for completion).",
+    sendControlSchema.shape,
+    { title: "Send Control", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async ({ session_id, control }) => {
+      try {
+        const result = await handleSendControl(
+          { session_id, control },
+          sessionManager,
+          config,
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 
-server.tool(
-  "confirm_dangerous_command",
-  "Execute a command that was flagged as dangerous by send_command. Requires a justification explaining WHY the command is necessary. This is a separate confirmation step for safety.",
-  confirmDangerousCommandSchema.shape,
-  { title: "Confirm Dangerous Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  async ({ session_id, input, justification }) => {
-    try {
-      const result = await handleConfirmDangerousCommand(
-        { session_id, input, justification },
-        sessionManager,
-        config,
-      );
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-  },
-);
+  server.tool(
+    "confirm_dangerous_command",
+    "Execute a command that was flagged as dangerous by send_command. Requires a justification explaining WHY the command is necessary. This is a separate confirmation step for safety.",
+    confirmDangerousCommandSchema.shape,
+    { title: "Confirm Dangerous Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    async ({ session_id, input, justification }) => {
+      try {
+        const result = await handleConfirmDangerousCommand(
+          { session_id, input, justification },
+          sessionManager,
+          config,
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  return { server, config, sessionManager };
+}
 
 // --- Lifecycle ---
 
 async function main() {
+  const { server, config, sessionManager } = createServer();
   const transport = new StdioServerTransport();
 
   // Initialize audit logger
@@ -252,8 +261,22 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error("[mcp-terminal] Fatal error:", err);
-  sessionManager.closeAll();
-  process.exit(1);
-});
+// Only start the server when run directly (not when imported for scanning by Smithery etc.)
+const isDirectRun = process.argv[1] &&
+  (process.argv[1].endsWith("/bin.js") ||
+   process.argv[1].endsWith("/index.js") ||
+   process.argv[1].endsWith("mcp-interactive-terminal"));
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error("[mcp-terminal] Fatal error:", err);
+    process.exit(1);
+  });
+}
+
+// Export for Smithery scanning — returns a fresh, unconnected server
+export default createServer;
+export function createSandboxServer() {
+  const { server } = createServer();
+  return server;
+}

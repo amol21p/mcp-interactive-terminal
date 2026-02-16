@@ -321,7 +321,7 @@ All settings via environment variables. Pass them in your MCP config:
 | `MCP_TERMINAL_ALLOWED_PATHS` | — | Comma-separated paths sessions can access |
 | `MCP_TERMINAL_REDACT_SECRETS` | `false` | Redact AWS keys, tokens, private keys in output |
 | `MCP_TERMINAL_LOG_INPUTS` | `false` | Log all inputs to stderr (for debugging) |
-| `MCP_TERMINAL_IDLE_TIMEOUT` | `0` | Auto-close idle sessions (ms, 0 = disabled) |
+| `MCP_TERMINAL_IDLE_TIMEOUT` | `1800000` | Auto-close idle sessions (ms, default 30min, 0 = disabled) |
 | `MCP_TERMINAL_DANGER_DETECTION` | `true` | Enable dangerous command confirmation flow |
 | `MCP_TERMINAL_AUDIT_LOG` | — | Path to JSON audit log file |
 | `MCP_TERMINAL_SANDBOX` | `false` | Enable OS-level kernel sandboxing |
