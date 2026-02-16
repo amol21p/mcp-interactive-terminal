@@ -25,14 +25,23 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
+    "model-context-protocol",
     "terminal",
     "interactive",
     "shell",
     "repl",
     "pty",
+    "cli",
+    "ssh",
     "claude",
+    "anthropic",
+    "cursor",
     "ai",
-    "model-context-protocol"
+    "ai-agent",
+    "ai-tools",
+    "llm",
+    "tool-use"
   ],
   "repository": {
     "type": "git",
