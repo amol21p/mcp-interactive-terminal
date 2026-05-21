@@ -264,7 +264,9 @@ async function main() {
 // Only start the server when run directly (not when imported for scanning by Smithery etc.)
 const isDirectRun = process.argv[1] &&
   (process.argv[1].endsWith("/bin.js") ||
+   process.argv[1].endsWith("\\bin.js") ||
    process.argv[1].endsWith("/index.js") ||
+   process.argv[1].endsWith("\\index.js") ||
    process.argv[1].endsWith("mcp-interactive-terminal"));
 
 if (isDirectRun) {
