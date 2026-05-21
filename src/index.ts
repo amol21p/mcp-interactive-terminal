@@ -28,6 +28,76 @@ import {
 import { initSandbox, resetSandbox } from "./sandbox.js";
 import { configureAudit, audit } from "./utils/audit-logger.js";
 
+// --- Output Formatters ---
+
+function formatCreateSession(result: { session_id: string; name: string; pid: number }): string {
+  return `---
+session_id: ${result.session_id}
+name: ${result.name}
+pid: ${result.pid}
+---`;
+}
+
+function formatSendCommand(result: { output: string; is_complete: boolean; is_alive: boolean; warning?: string }): string {
+  const warningLine = result.warning ? `\nwarning: ${result.warning}` : "";
+  return `---
+complete: ${result.is_complete}
+alive: ${result.is_alive}${warningLine}
+---
+
+${result.output || "(empty)"}`;
+}
+
+function formatReadOutput(result: { output: string; is_alive: boolean }): string {
+  return `---
+alive: ${result.is_alive}
+---
+
+${result.output || "(empty)"}`;
+}
+
+function formatListSessions(sessions: Array<{ session_id: string; name: string; command: string; pid: number; is_alive: boolean; created_at: string }>): string {
+  if (sessions.length === 0) {
+    return `---
+count: 0
+sessions: []`;
+  }
+  const yamlSessions = sessions.map((s) => `  - id: ${s.session_id}
+    name: ${s.name}
+    command: ${s.command}
+    pid: ${s.pid}
+    alive: ${s.is_alive}
+    created: ${s.created_at}`).join("\n");
+  return `---
+count: ${sessions.length}
+sessions:
+${yamlSessions}
+---`;
+}
+
+function formatCloseSession(result: { success: boolean }): string {
+  return `---
+success: ${result.success}
+---`;
+}
+
+function formatSendControl(result: { output: string }): string {
+  return `---
+control: sent
+---
+
+${result.output || "(empty)"}`;
+}
+
+function formatConfirmDangerousCommand(result: { output: string; is_complete: boolean; is_alive: boolean }): string {
+  return `---
+complete: ${result.is_complete}
+alive: ${result.is_alive}
+---
+
+${result.output || "(empty)"}`;
+}
+
 /**
  * Create a configured McpServer with all tools registered.
  * Does NOT connect to any transport — caller is responsible for that.
@@ -55,7 +125,7 @@ function createServer(cfg?: ServerConfig) {
           sessionManager,
           config,
         );
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: "text", text: formatCreateSession(result) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
@@ -77,7 +147,7 @@ function createServer(cfg?: ServerConfig) {
           sessionManager,
           config,
         );
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: "text", text: formatSendCommand(result) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
@@ -99,7 +169,7 @@ function createServer(cfg?: ServerConfig) {
           sessionManager,
           config,
         );
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: "text", text: formatReadOutput(result) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
@@ -117,7 +187,7 @@ function createServer(cfg?: ServerConfig) {
     async () => {
       try {
         const result = await handleListSessions(sessionManager);
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: "text", text: formatListSessions(result) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
@@ -138,7 +208,7 @@ function createServer(cfg?: ServerConfig) {
           { session_id, signal },
           sessionManager,
         );
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: "text", text: formatCloseSession(result) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
@@ -160,7 +230,7 @@ function createServer(cfg?: ServerConfig) {
           sessionManager,
           config,
         );
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: "text", text: formatSendControl(result) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
@@ -182,7 +252,7 @@ function createServer(cfg?: ServerConfig) {
           sessionManager,
           config,
         );
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        return { content: [{ type: "text", text: formatConfirmDangerousCommand(result) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
@@ -264,7 +334,9 @@ async function main() {
 // Only start the server when run directly (not when imported for scanning by Smithery etc.)
 const isDirectRun = process.argv[1] &&
   (process.argv[1].endsWith("/bin.js") ||
+   process.argv[1].endsWith("\\bin.js") ||
    process.argv[1].endsWith("/index.js") ||
+   process.argv[1].endsWith("\\index.js") ||
    process.argv[1].endsWith("mcp-interactive-terminal"));
 
 if (isDirectRun) {
